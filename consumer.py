@@ -17,3 +17,7 @@ data = np.random.rand(10)
 producer.fill(data)
 
 print(f"{rank=} {data=}")
+
+for i in range(10):
+    p = producer.take(1)
+    print(f"{rank=}, {i=}, {p=}")

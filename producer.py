@@ -109,12 +109,14 @@ class Producer(object):
 
             src_offset = ptr_incr(win = self.ptr, n = N, host = 0)
 
-            buf = np.zeros(dtype=self.np_dtype)
+            buf = np.zeros(N, dtype=self.np_dtype)
 
             self.win.Lock(rank = 0)
-            win.Get(
+            self.win.Get(
                 buf,
                 target_rank = 0,
                 target = (src_offset, N, self.mpi_dtype)
             )
             self.win.Unlock(rank = 0)
+
+            return buf
