@@ -12,7 +12,7 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
 buff_size = 10
-data_size = 20
+data_size = 30
 
 producer = Producer(buff_size)
 

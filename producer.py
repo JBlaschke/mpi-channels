@@ -44,7 +44,9 @@ def ptr_incr(win, n, host):
 
 def fill_buffer(buf, src, offset):
     idx_max = len(buf) if len(src) - offset > len(buf) else len(src)
+    # print(f"{idx_max=}, {offset=}")
     buf[:idx_max] = src[offset:offset + idx_max]
+    # print(f"{buf=}")
     return idx_max
 
 
@@ -106,9 +108,11 @@ class Producer(object):
                     src_offset = ptr_peek(win = self.ptr, host = 0)
                     src_capacity = ptr_peek(win = self.ptr_max, host = 0)
                     if src_offset < src_capacity:
+                        # print(f"waiting {src_offset=}, {src_capacity=}")
                         continue
 
                     self.win.Lock(rank = 0)
+                    mem = np.frombuffer(self.win, dtype = self.np_dtype)
                     idx_max = fill_buffer(mem, src, offset = src_offset)
                     self.win.Unlock(rank = 0)
 
@@ -118,8 +122,10 @@ class Producer(object):
                         host = 0
                     )
 
+                    # print(f"refilled buffer: {src_offset=}, {idx_max=}")
 
-                    if idx_max <= len(src):
+                    if idx_max >= len(src):
+                        # print("done!")
                         break
 
 
@@ -134,6 +140,7 @@ class Producer(object):
 
             buf = np.zeros(N, dtype=self.np_dtype)
 
+            # print(f"taking {src_offset=}")
             self.win.Lock(rank = 0)
             self.win.Get(
                 buf,
