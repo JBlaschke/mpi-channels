@@ -44,9 +44,7 @@ def ptr_incr(win, n, host):
 
 def fill_buffer(buf, src, offset):
     idx_max = len(buf) if len(src) - offset > len(buf) else len(src)
-    print(f"{idx_max=}, {offset=}")
     buf[:idx_max] = src[offset:offset + idx_max]
-    print(f"{buf=}")
     return idx_max
 
 
@@ -120,10 +118,8 @@ class Producer(object):
                         host = 0
                     )
 
-                    print(f"refilled buffer: {src_offset=}, {idx_max=}")
 
                     if idx_max <= len(src):
-                        print("done!")
                         break
 
 
@@ -142,7 +138,7 @@ class Producer(object):
             self.win.Get(
                 buf,
                 target_rank = 0,
-                target = (src_offset, N, self.mpi_dtype)
+                target = (src_offset % self.n_buf, N, self.mpi_dtype)
             )
             self.win.Unlock(rank = 0)
 

@@ -14,7 +14,7 @@ rank = comm.Get_rank()
 buff_size = 10
 data_size = 20
 
-producer = Producer(buff_size) 
+producer = Producer(buff_size)
 
 data = np.random.rand(data_size)
 producer.fill(data)
