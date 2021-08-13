@@ -11,13 +11,16 @@ from   producer import Producer
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-producer = Producer(20) 
+buff_size = 10
+data_size = 20
 
-data = np.random.rand(10)
+producer = Producer(buff_size) 
+
+data = np.random.rand(data_size)
 producer.fill(data)
 
 print(f"{rank=} {data=}")
 
-for i in range(10):
+for i in range(data_size):
     p = producer.take(1)
     print(f"{rank=}, {i=}, {p=}")

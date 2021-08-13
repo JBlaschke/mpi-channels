@@ -44,7 +44,9 @@ def ptr_incr(win, n, host):
 
 def fill_buffer(buf, src, offset):
     idx_max = len(buf) if len(src) - offset > len(buf) else len(src)
+    print(f"{idx_max=}, {offset=}")
     buf[:idx_max] = src[offset:offset + idx_max]
+    print(f"{buf=}")
     return idx_max
 
 
@@ -76,6 +78,16 @@ class Producer(object):
             host  = 0
         )
 
+        self.ptr_max = make_win(
+            dtype = MPI.INT,
+            n_buf = 1,
+            comm  = self.comm,
+            host  = 0
+        )
+
+        ptr_set(win = self.ptr,     src = 0, host = 0)
+        ptr_set(win = self.ptr_max, src = 0, host = 0)
+
 
     def fill(self, src):
 
@@ -84,22 +96,34 @@ class Producer(object):
             ptr_set(win = self.ptr, src = 0, host = 0)
 
             self.win.Lock(rank = 0)
-            mem = np.frombuffer(self.win, dtype=self.np_dtype)
+            mem = np.frombuffer(self.win, dtype = self.np_dtype)
             idx_max = fill_buffer(mem, src, offset = 0)
             self.win.Unlock(rank = 0)
+
+            ptr_set(win = self.ptr_max, src = idx_max, host = 0)
 
             if idx_max < len(src):
                 while True:
 
                     src_offset = ptr_peek(win = self.ptr, host = 0)
-                    if src_offset < len(src):
+                    src_capacity = ptr_peek(win = self.ptr_max, host = 0)
+                    if src_offset < src_capacity:
                         continue
-         
+
                     self.win.Lock(rank = 0)
-                    idx_max = fill_buffer(mem, src, src_offset = src_offset)
+                    idx_max = fill_buffer(mem, src, offset = src_offset)
                     self.win.Unlock(rank = 0)
 
+                    ptr_set(
+                        win  = self.ptr_max,
+                        src  = src_offset + idx_max,
+                        host = 0
+                    )
+
+                    print(f"refilled buffer: {src_offset=}, {idx_max=}")
+
                     if idx_max <= len(src):
+                        print("done!")
                         break
 
 
@@ -108,6 +132,9 @@ class Producer(object):
         if self.rank > 0:
 
             src_offset = ptr_incr(win = self.ptr, n = N, host = 0)
+            src_capacity = ptr_peek(win = self.ptr_max,  host = 0)
+            while src_offset > src_capacity:
+                src_capacity = ptr_peek(win = self.ptr_max,  host = 0)
 
             buf = np.zeros(N, dtype=self.np_dtype)
 
