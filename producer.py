@@ -43,10 +43,10 @@ def ptr_incr(win, n, host):
 
 
 def fill_buffer(buf, src, offset):
-    idx_max = len(buf) if len(src) - offset > len(buf) else len(src)
-    # print(f"{idx_max=}, {offset=}")
+    idx_max = len(buf) if len(src) - offset > len(buf) else len(src) - offset
+    print(f"{idx_max=}, {offset=}")
     buf[:idx_max] = src[offset:offset + idx_max]
-    # print(f"{buf=}")
+    print(f"{buf=}")
     return idx_max
 
 
@@ -85,15 +85,25 @@ class Producer(object):
             host  = 0
         )
 
-        ptr_set(win = self.ptr,     src = 0, host = 0)
-        ptr_set(win = self.ptr_max, src = 0, host = 0)
+        self.ptr_len = make_win(
+            dtype = MPI.INT,
+            n_buf = 1,
+            comm  = self.comm,
+            host  = 0
+        )
+
+        ptr_set(win = self.ptr,     src =  0, host = 0)
+        ptr_set(win = self.ptr_max, src =  0, host = 0)
+        ptr_set(win = self.ptr_len, src = -1, host = 0)
 
 
     def fill(self, src):
 
         if self.rank == 0:
 
-            ptr_set(win = self.ptr, src = 0, host = 0)
+            ptr_set(win = self.ptr,     src = 0,        host = 0)
+            ptr_set(win = self.ptr_len, src = len(src), host = 0)
+            print("ptr_len has been set: " + str(len(src)))
 
             self.win.Lock(rank = 0)
             mem = np.frombuffer(self.win, dtype = self.np_dtype)
@@ -108,7 +118,7 @@ class Producer(object):
                     src_offset = ptr_peek(win = self.ptr, host = 0)
                     src_capacity = ptr_peek(win = self.ptr_max, host = 0)
                     if src_offset < src_capacity:
-                        # print(f"waiting {src_offset=}, {src_capacity=}")
+                        print(f"waiting {src_offset=}, {src_capacity=}")
                         continue
 
                     self.win.Lock(rank = 0)
@@ -122,10 +132,10 @@ class Producer(object):
                         host = 0
                     )
 
-                    # print(f"refilled buffer: {src_offset=}, {idx_max=}")
+                    print(f"refilled buffer: {src_offset=}, {idx_max=}")
 
-                    if idx_max >= len(src):
-                        # print("done!")
+                    if src_offset + idx_max >= len(src):
+                        print("done!")
                         break
 
 
@@ -133,14 +143,27 @@ class Producer(object):
 
         if self.rank > 0:
 
+            src_len = -1
+            while src_len < 0:
+                print(f"waiting for data {self.rank=}, {src_len=}")
+                src_len = ptr_peek(win = self.ptr_len, host = 0)
+                sleep(0.1)
+
             src_offset = ptr_incr(win = self.ptr, n = N, host = 0)
+
+            if src_offset >= src_len:
+                print(f"Overrunning Src {src_offset=}, {src_len=}")
+                return None
+
             src_capacity = ptr_peek(win = self.ptr_max,  host = 0)
+
             while src_offset > src_capacity:
+                print(f"{self.rank=} peeking {src_offset=} {src_capacity=}")
                 src_capacity = ptr_peek(win = self.ptr_max,  host = 0)
 
             buf = np.zeros(N, dtype=self.np_dtype)
 
-            # print(f"taking {src_offset=}")
+            print(f"{self.rank=} taking {src_offset=}")
             self.win.Lock(rank = 0)
             self.win.Get(
                 buf,
