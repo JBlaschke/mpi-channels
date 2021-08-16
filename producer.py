@@ -2,8 +2,12 @@
 # -*- coding: utf-8 -*-
 
 
-import numpy  as     np
-from   mpi4py import MPI
+import numpy             as     np
+from   mpi4py            import MPI
+from   mpi4py.util.dtlib import from_numpy_dtype
+
+
+PTR_BUFF_SIZE = 3 # PTR, MAX, LEN
 
 
 def make_win(dtype, n_buf, comm, host):
@@ -16,38 +20,81 @@ def make_win(dtype, n_buf, comm, host):
     )
 
 
-def ptr_set(win, src, host):
-    buf = np.array([src])
-    win.Lock(rank = host)
-    win.Put(buf, target_rank = host)
-    win.Unlock(rank = host)
+
+class FrameBuffer(object):
+
+    def __init__(self, n_buf, dtype=np.float64, host=0):
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        self.host = host
+
+        self.np_dtype  = dtype
+        self.mpi_dtype = from_numpy_dtype(dtype)
+
+        self.n_buf = n_buf
+
+        self.win = make_win(
+            dtype = self.mpi_dtype,
+            n_buf = self.n_buf,
+            comm  = self.comm,
+            host  = host
+        )
+
+        self.ptr = make_win(
+            dtype = from_numpy_dtype(np.uint64),
+            n_buf = PTR_BUFF_SIZE,
+            comm  = self.comm,
+            host  = host
+        )
 
 
-def ptr_peek(win, host):
-    buf = np.array([0])
-    win.Lock(rank = host)
-    win.Get(buf, target_rank = host)
-    win.Unlock(rank = host)
-    return buf[0]
+    def lock(self):
+        self.win.Lock(rank=self.host)
+        self.ptr.Lock(rank=self.host)
 
 
-def ptr_incr(win, n, host):
-    buf = np.array([0])
-    win.Lock(rank = host)
-    win.Get(buf, target_rank = host)
-    ptr    = buf[0]
-    buf[0] = buf[0] + n
-    win.Put(buf, target_rank = host)
-    win.Unlock(rank = host)
-    return ptr
+    def unlock(self):
+        self.win.Unlock(rank=self.host)
+        self.ptr.Unlock(rank=self.host)
 
 
-def fill_buffer(buf, src, offset):
-    idx_max = len(buf) if len(src) - offset > len(buf) else len(src) - offset
-    print(f"{idx_max=}, {offset=}")
-    buf[:idx_max] = src[offset:offset + idx_max]
-    print(f"{buf=}")
-    return idx_max
+    def ptr_set(self, src):
+        buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
+
+        buf[:] = src[:]
+
+        self.ptr.Put(buf, target_rank=self.host)
+
+
+    def ptr_peek(self):
+        buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
+
+        self.ptr.Get(buf, target_rank=self.host)
+
+        return buf
+
+
+    def buf_get(self, N, offset):
+        buf = np.empty(N, dtype=self.np_dtype)
+
+        # print(f"{self.rank=} taking {offset=}")
+        self.win.Get(
+            buf,
+            target_rank = self.host,
+            target      = (offset % self.n_buf, N, self.mpi_dtype)
+        )
+
+        return buf
+
+
+    def fill_buffer(self, src, offset):
+        idx_max = self.n_buf if len(src) - offset > self.n_buf else len(src) - offset
+        # print(f"{idx_max=}, {offset=}")
+        mem = np.frombuffer(self.win, dtype = self.np_dtype)
+        # print(f"{mem=}")
+        mem[:int(idx_max)] = src[int(offset):int(offset + idx_max)]
+        # print(f"{mem=}")
+        return idx_max
 
 
 class Producer(object):
@@ -62,80 +109,44 @@ class Producer(object):
             self.mpi_dtype = MPI.FLOAT
             self.np_dtype = np.float32
 
-        self.n_buf = n_buf
-
-        self.win = make_win(
-            dtype = self.mpi_dtype,
-            n_buf = self.n_buf,
-            comm  = self.comm,
-            host  = 0
-        )
-
-        self.ptr = make_win(
-            dtype = MPI.INT,
-            n_buf = 1,
-            comm  = self.comm,
-            host  = 0
-        )
-
-        self.ptr_max = make_win(
-            dtype = MPI.INT,
-            n_buf = 1,
-            comm  = self.comm,
-            host  = 0
-        )
-
-        self.ptr_len = make_win(
-            dtype = MPI.INT,
-            n_buf = 1,
-            comm  = self.comm,
-            host  = 0
-        )
-
-        ptr_set(win = self.ptr,     src =  0, host = 0)
-        ptr_set(win = self.ptr_max, src =  0, host = 0)
-        ptr_set(win = self.ptr_len, src = -1, host = 0)
+        self.buf = FrameBuffer(n_buf, dtype=self.np_dtype, host=0)
+        self.buf.lock()
+        self.buf.ptr_set([0, 0, -1])
+        self.buf.unlock()
 
 
     def fill(self, src):
 
         if self.rank == 0:
 
-            ptr_set(win = self.ptr,     src = 0,        host = 0)
-            ptr_set(win = self.ptr_len, src = len(src), host = 0)
-            print("ptr_len has been set: " + str(len(src)))
+            self.buf.lock()
+            idx_max = self.buf.fill_buffer(src, 0)
+            self.buf.ptr_set([0, idx_max, len(src)])
+            self.buf.unlock()
 
-            self.win.Lock(rank = 0)
-            mem = np.frombuffer(self.win, dtype = self.np_dtype)
-            idx_max = fill_buffer(mem, src, offset = 0)
-            self.win.Unlock(rank = 0)
-
-            ptr_set(win = self.ptr_max, src = idx_max, host = 0)
+            # print("ptr_len has been set: " + str(len(src)))
 
             if idx_max < len(src):
                 while True:
 
-                    src_offset = ptr_peek(win = self.ptr, host = 0)
-                    src_capacity = ptr_peek(win = self.ptr_max, host = 0)
+                    self.buf.lock()
+                    [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+
                     if src_offset < src_capacity:
-                        print(f"waiting {src_offset=}, {src_capacity=}")
+                        self.buf.unlock()
+                        # print(f"waiting {src_offset=}, {src_capacity=}")
                         continue
 
-                    self.win.Lock(rank = 0)
-                    mem = np.frombuffer(self.win, dtype = self.np_dtype)
-                    idx_max = fill_buffer(mem, src, offset = src_offset)
-                    self.win.Unlock(rank = 0)
-
-                    ptr_set(
-                        win  = self.ptr_max,
-                        src  = src_offset + idx_max,
-                        host = 0
+                    idx_max = self.buf.fill_buffer(src, src_offset)
+                    self.buf.ptr_set(
+                        [src_offset, src_capacity + idx_max, src_len]
                     )
+                    self.buf.unlock()
 
-                    print(f"refilled buffer: {src_offset=}, {idx_max=}")
+                    # print(f"refilled buffer: {src_offset=}, {idx_max=}")
 
                     if src_offset + idx_max >= len(src):
-                        print("done!")
+                        # print("done!")
                         break
 
 
@@ -145,31 +156,30 @@ class Producer(object):
 
             src_len = -1
             while src_len < 0:
-                print(f"waiting for data {self.rank=}, {src_len=}")
-                src_len = ptr_peek(win = self.ptr_len, host = 0)
-                sleep(0.1)
+                # print(f"waiting for data {self.rank=}, {src_len=}")
 
-            src_offset = ptr_incr(win = self.ptr, n = N, host = 0)
+                self.buf.lock()
+                [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+                self.buf.unlock()
+
+            self.buf.lock()
+            [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+            self.buf.unlock()
 
             if src_offset >= src_len:
-                print(f"Overrunning Src {src_offset=}, {src_len=}")
+                # print(f"Overrunning Src {src_offset=}, {src_len=}")
                 return None
 
-            src_capacity = ptr_peek(win = self.ptr_max,  host = 0)
-
             while src_offset > src_capacity:
-                print(f"{self.rank=} peeking {src_offset=} {src_capacity=}")
-                src_capacity = ptr_peek(win = self.ptr_max,  host = 0)
+                # print(f"{self.rank=} peeking {src_offset=} {src_capacity=}")
+                self.buf.lock()
+                [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+                self.buf.unlock()
 
-            buf = np.zeros(N, dtype=self.np_dtype)
-
-            print(f"{self.rank=} taking {src_offset=}")
-            self.win.Lock(rank = 0)
-            self.win.Get(
-                buf,
-                target_rank = 0,
-                target = (src_offset % self.n_buf, N, self.mpi_dtype)
-            )
-            self.win.Unlock(rank = 0)
+            self.buf.lock()
+            [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+            buf = self.buf.buf_get(N, src_offset)
+            self.buf.ptr_set([src_offset + N, src_capacity, src_len])
+            self.buf.unlock()
 
             return buf
