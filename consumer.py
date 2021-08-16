@@ -21,7 +21,10 @@ producer.fill(data)
 
 print(f"{rank=} {data=}")
 
+res = 0
 for i in range(data_size):
     p = producer.take(1)
-    if rank > 0:
+    if p is not None:
         print(f"{rank=}, {i=}, {p=}")
+        res += 1
+print(f"{res=}")
