@@ -23,4 +23,5 @@ print(f"{rank=} {data=}")
 
 for i in range(data_size):
     p = producer.take(1)
-    print(f"{rank=}, {i=}, {p=}")
+    if rank > 0:
+        print(f"{rank=}, {i=}, {p=}")
