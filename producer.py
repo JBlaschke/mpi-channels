@@ -105,11 +105,11 @@ class FrameBuffer(object):
 
     def buf_fill(self, src, offset):
         idx_max = self.n_buf if len(src) - offset > self.n_buf else len(src) - offset
-        # print(f"{idx_max=}, {offset=}")
+        print(f"{idx_max=}, {offset=}")
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
-        # print(f"{mem=}")
-        mem[:int(idx_max)] = src[int(offset):int(offset + idx_max)]
-        # print(f"{mem=}")
+        print(f"{mem=}")
+        mem[:idx_max] = src[offset:offset + idx_max]
+        print(f"{mem=}")
         return int(idx_max)
 
 
@@ -138,19 +138,19 @@ class Producer(object):
         if self.rank == 0:
 
             self.buf.lock()
-            idx_max = self.buf.buf_fill(src, 0)
-            self.buf.ptr_set([0, idx_max, len(src)])
+            chunk = self.buf.buf_fill(src, 0)
+            self.buf.ptr_set([0, chunk, len(src)])
             self.buf.unlock()
 
             # print("ptr_len has been set: " + str(len(src)))
             self.comm.Barrier()
 
-            self.buf.lock()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_get()
-            # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
-            self.buf.unlock()
+            # self.buf.lock()
+            # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+            # # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
+            # self.buf.unlock()
 
-            if idx_max < len(src):
+            if chunk < len(src):
                 while True:
 
                     self.buf.lock()
@@ -161,7 +161,7 @@ class Producer(object):
                         # print(f"waiting {src_offset=}, {src_capacity=}")
                         continue
 
-                    idx_max = self.buf.buf_fill(src, src_offset)
+                    idx_max = self.buf.buf_fill(src, chunk)
                     # self.buf.ptr_set(
                     #     [src_offset, src_capacity + idx_max, src_len]
                     # )
@@ -169,13 +169,14 @@ class Producer(object):
                         [0, idx_max, 0]
                     )
                     src_capacity += idx_max
+                    chunk += idx_max
                     # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
                     # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                     self.buf.unlock()
 
                     # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
 
-                    if src_offset + idx_max >= len(src):
+                    if chunk >= len(src):
                         # print("done!")
                         break
         else:
@@ -202,11 +203,13 @@ class Producer(object):
                 # print(f"Overrunning Src {src_offset=}, {src_len=}")
                 return None
 
-            while src_offset > src_capacity:
+            while src_offset >= src_capacity:
                 # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
                 self.buf.lock()
                 [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                 self.buf.unlock()
+                if src_offset >= src_len:
+                    return None
 
             self.buf.lock()
             # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
