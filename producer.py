@@ -57,17 +57,10 @@ class FrameBuffer(object):
         self.win.Lock(rank=self.host, lock_type=MPI.LOCK_EXCLUSIVE)
         self.ptr.Lock(rank=self.host, lock_type=MPI.LOCK_EXCLUSIVE)
 
-        # self.win.Lock_all()
-        # self.ptr.Lock_all()
-
-
 
     def unlock(self):
         self.win.Unlock(rank=self.host)
         self.ptr.Unlock(rank=self.host)
-
-        # self.win.Unlock_all()
-        # self.ptr.Unlock_all()
 
 
     def ptr_set(self, src):
@@ -79,7 +72,7 @@ class FrameBuffer(object):
         self.ptr.Put(buf, target_rank=self.host)
 
 
-    def ptr_peek(self):
+    def ptr_get(self):
         buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
         self.ptr.Get(buf, target_rank=self.host)
@@ -100,7 +93,7 @@ class FrameBuffer(object):
         return buf
 
 
-    def fill_buffer(self, src, offset):
+    def buf_fill(self, src, offset):
         idx_max = self.n_buf if len(src) - offset > self.n_buf else len(src) - offset
         # print(f"{idx_max=}, {offset=}")
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
@@ -135,7 +128,7 @@ class Producer(object):
         if self.rank == 0:
 
             self.buf.lock()
-            idx_max = self.buf.fill_buffer(src, 0)
+            idx_max = self.buf.buf_fill(src, 0)
             self.buf.ptr_set([0, idx_max, len(src)])
             self.buf.unlock()
 
@@ -143,7 +136,7 @@ class Producer(object):
             self.comm.Barrier()
 
             self.buf.lock()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+            [src_offset, src_capacity, src_len] = self.buf.ptr_get()
             # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
             self.buf.unlock()
 
@@ -151,19 +144,19 @@ class Producer(object):
                 while True:
 
                     self.buf.lock()
-                    [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+                    [src_offset, src_capacity, src_len] = self.buf.ptr_get()
 
                     if src_offset < src_capacity:
                         self.buf.unlock()
                         # print(f"waiting {src_offset=}, {src_capacity=}")
                         continue
 
-                    idx_max = self.buf.fill_buffer(src, src_offset)
+                    idx_max = self.buf.buf_fill(src, src_offset)
                     self.buf.ptr_set(
                         [src_offset, src_capacity + idx_max, src_len]
                     )
                     # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
-                    [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+                    [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                     self.buf.unlock()
 
                     # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
@@ -184,11 +177,11 @@ class Producer(object):
             #     # print(f"waiting for data {self.rank=}, {src_len=}")
 
             #     self.buf.lock()
-            #     [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+            #     [src_offset, src_capacity, src_len] = self.buf.ptr_get()
             #     self.buf.unlock()
 
             self.buf.lock()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+            [src_offset, src_capacity, src_len] = self.buf.ptr_get()
             self.buf.unlock()
 
             if src_offset >= src_len:
@@ -198,11 +191,11 @@ class Producer(object):
             while src_offset > src_capacity:
                 # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
                 self.buf.lock()
-                [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+                [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                 self.buf.unlock()
 
             self.buf.lock()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_peek()
+            [src_offset, src_capacity, src_len] = self.buf.ptr_get()
             buf = self.buf.buf_get(N, src_offset)
             self.buf.ptr_set([src_offset + N, src_capacity, src_len])
             self.buf.unlock()

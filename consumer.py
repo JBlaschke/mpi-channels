@@ -27,4 +27,5 @@ for i in range(data_size):
     if p is not None:
         print(f"{rank=}, {i=}, {p=}")
         res += 1
+
 print(f"{res=}")
