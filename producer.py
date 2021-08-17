@@ -72,6 +72,16 @@ class FrameBuffer(object):
         self.ptr.Put(buf, target_rank=self.host)
 
 
+    def ptr_incr(self, src):
+        buf  = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
+        incr = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
+
+        incr[:] = src[:]
+        self.ptr.Get_accumulate(incr, buf, target_rank=self.host)
+
+        return buf
+
+
     def ptr_get(self):
         buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
@@ -152,11 +162,15 @@ class Producer(object):
                         continue
 
                     idx_max = self.buf.buf_fill(src, src_offset)
-                    self.buf.ptr_set(
-                        [src_offset, src_capacity + idx_max, src_len]
+                    # self.buf.ptr_set(
+                    #     [src_offset, src_capacity + idx_max, src_len]
+                    # )
+                    [src_offset, src_capacity, src_len] = self.buf.ptr_incr(
+                        [0, idx_max, 0]
                     )
+                    src_capacity += idx_max
                     # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
-                    [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+                    # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                     self.buf.unlock()
 
                     # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
@@ -195,9 +209,10 @@ class Producer(object):
                 self.buf.unlock()
 
             self.buf.lock()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+            # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+            [src_offset, src_capacity, src_len] = self.buf.ptr_incr([N, 0, 0])
             buf = self.buf.buf_get(N, src_offset)
-            self.buf.ptr_set([src_offset + N, src_capacity, src_len])
+            # self.buf.ptr_set([src_offset + N, src_capacity, src_len])
             self.buf.unlock()
 
             return buf
