@@ -105,12 +105,12 @@ class FrameBuffer(object):
 
     def buf_fill(self, src, offset):
         idx_max = self.n_buf if len(src) - offset > self.n_buf else len(src) - offset
-        print(f"{idx_max=}, {offset=}")
+        # print(f"{idx_max=}, {offset=}")
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
-        print(f"{mem=}")
+        # print(f"{mem=}")
         mem[:idx_max] = src[offset:offset + idx_max]
-        print(f"{mem=}")
-        return int(idx_max)
+        # print(f"{mem=}")
+        return idx_max
 
 
     def fence(self):
@@ -195,27 +195,30 @@ class Producer(object):
             #     [src_offset, src_capacity, src_len] = self.buf.ptr_get()
             #     self.buf.unlock()
 
-            self.buf.lock()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_get()
-            self.buf.unlock()
-
-            if src_offset >= src_len:
-                # print(f"Overrunning Src {src_offset=}, {src_len=}")
-                return None
-
-            while src_offset >= src_capacity:
-                # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
+            while True:
                 self.buf.lock()
                 [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                 self.buf.unlock()
+
                 if src_offset >= src_len:
+                    # print(f"Overrunning Src {src_offset=}, {src_len=}")
                     return None
 
-            self.buf.lock()
-            # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
-            [src_offset, src_capacity, src_len] = self.buf.ptr_incr([N, 0, 0])
-            buf = self.buf.buf_get(N, src_offset)
-            # self.buf.ptr_set([src_offset + N, src_capacity, src_len])
-            self.buf.unlock()
+                if src_offset >= src_capacity:
+                    ## print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
+                    continue
+                    # self.buf.lock()
+                    # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+                    # self.buf.unlock()
+                    # if src_offset >= src_len:
+                    #     return None
 
-            return buf
+                self.buf.lock()
+                # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+                [src_offset, src_capacity, src_len] = self.buf.ptr_incr([N, 0, 0])
+                buf = self.buf.buf_get(N, src_offset)
+                # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
+                # self.buf.ptr_set([src_offset + N, src_capacity, src_len])
+                self.buf.unlock()
+
+                return buf
