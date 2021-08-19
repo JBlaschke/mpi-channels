@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 
+import logging
 import numpy             as     np
 from   mpi4py            import MPI
 from   mpi4py.util.dtlib import from_numpy_dtype
@@ -23,7 +24,14 @@ def make_win(dtype, n_buf, comm, host):
 
 class FrameBuffer(object):
 
+    @staticmethod
+    def logger_name(rank):
+        return __name__ + f"::FrameBuffer.{rank}.log"
+
+
     def __init__(self, n_buf, dtype=np.float64, host=0):
+        """
+        """
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
         self.host = host
@@ -47,6 +55,8 @@ class FrameBuffer(object):
             host  = host
         )
 
+        self.log = logging.getLogger(FrameBuffer.logger_name(self.rank))
+
         if self.rank == self.host:
             self.lock()
             self.ptr_set([0, 0, 0])
@@ -54,43 +64,64 @@ class FrameBuffer(object):
 
 
     def lock(self):
+        """
+        """
         self.win.Lock(rank=self.host, lock_type=MPI.LOCK_EXCLUSIVE)
         self.ptr.Lock(rank=self.host, lock_type=MPI.LOCK_EXCLUSIVE)
 
+        self.log.debug("lock")
+
 
     def unlock(self):
+        """
+        """
         self.win.Unlock(rank=self.host)
         self.ptr.Unlock(rank=self.host)
 
+        self.log.debug(f"unlock")
+
 
     def ptr_set(self, src):
+        """
+        """
         buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
         buf[:] = src[:]
-        # print(f"{self.rank=} PUT {buf=} {src=}")
 
         self.ptr.Put(buf, target_rank=self.host)
 
+        self.log.debug(f"ptr_set {src=}")
+
 
     def ptr_incr(self, src):
+        """
+        """
         buf  = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
         incr = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
         incr[:] = src[:]
         self.ptr.Get_accumulate(incr, buf, target_rank=self.host)
 
+        self.log.debug(f"ptr_incr {buf=} {incr=}")
+
         return buf
 
 
     def ptr_get(self):
+        """
+        """
         buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
         self.ptr.Get(buf, target_rank=self.host)
+
+        self.log.debug(f"ptr_get {buf=}")
 
         return buf
 
 
     def buf_get(self, N, offset):
+        """
+        """
         buf = np.empty(N, dtype=self.np_dtype)
 
         # print(f"{self.rank=} taking {offset=}")
@@ -100,10 +131,14 @@ class FrameBuffer(object):
             target      = (offset % self.n_buf, N, self.mpi_dtype)
         )
 
+        self.log.debug(f"ptr_get {buf=}")
+
         return buf
 
 
     def buf_fill(self, src, offset):
+        """
+        """
         idx_max = self.n_buf if len(src) - offset > self.n_buf else len(src) - offset
         # print(f"{idx_max=}, {offset=}")
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
@@ -114,6 +149,8 @@ class FrameBuffer(object):
 
 
     def fence(self):
+        """
+        """
         self.win.Fence()
         self.ptr.Fence()
 
@@ -198,14 +235,16 @@ class Producer(object):
             while True:
                 self.buf.lock()
                 [src_offset, src_capacity, src_len] = self.buf.ptr_get()
-                self.buf.unlock()
+                # self.buf.unlock()
 
                 if src_offset >= src_len:
+                    self.buf.unlock()
                     # print(f"Overrunning Src {src_offset=}, {src_len=}")
                     return None
 
                 if src_offset >= src_capacity:
                     ## print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
+                    self.buf.unlock()
                     continue
                     # self.buf.lock()
                     # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
@@ -213,7 +252,7 @@ class Producer(object):
                     # if src_offset >= src_len:
                     #     return None
 
-                self.buf.lock()
+                # self.buf.lock()
                 # [src_offset, src_capacity, src_len] = self.buf.ptr_get()
                 [src_offset, src_capacity, src_len] = self.buf.ptr_incr([N, 0, 0])
                 buf = self.buf.buf_get(N, src_offset)

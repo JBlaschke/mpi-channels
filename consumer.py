@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 
 
-import numpy    as     np
-from   mpi4py   import MPI
+import numpy   as     np
+from   mpi4py  import MPI
+from   logging import DEBUG, basicConfig
 
-from   producer import Producer
+from producer import Producer
 
 
 comm = MPI.COMM_WORLD
@@ -15,6 +16,8 @@ buff_size = 10
 data_size = 30
 
 producer = Producer(buff_size)
+# producer.buf.log.setLevel(DEBUG)
+# basicConfig(filename=f"{rank:0>3}.log", level=DEBUG)
 
 data = np.random.rand(data_size)
 producer.fill(data)
