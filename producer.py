@@ -139,12 +139,12 @@ class FrameBuffer(object):
     def buf_fill(self, src, offset):
         """
         """
-        idx_max = self.n_buf if len(src) - offset > self.n_buf else len(src) - offset
-        # print(f"{idx_max=}, {offset=}")
+        idx_remain = len(src) - offset
+        idx_max = self.n_buf if idx_remain > self.n_buf else idx_remain
+        self.log.debug(f"buf_fill {idx_max=} {offset=}")
+
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
-        # print(f"{mem=}")
         mem[:idx_max] = src[offset:offset + idx_max]
-        # print(f"{mem=}")
         return idx_max
 
 
