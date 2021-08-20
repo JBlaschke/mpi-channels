@@ -12,6 +12,13 @@ PTR_BUFF_SIZE = 3 # PTR, MAX, LEN
 
 
 def make_win(dtype, n_buf, comm, host):
+    """
+    make_win(dtype, n_buf, comm, host)
+
+    Create an MPI RMA window containing elements of MPI type `dtype`. The RMA
+    window has length `n_buf`. It is accessible on MPI Communicator `comm`, and
+    is hosted on rank `host`.
+    """
     itemsize = dtype.Get_size()
     win_size = n_buf * itemsize if comm.Get_rank() == host else 0
     return MPI.Win.Allocate(
@@ -26,11 +33,27 @@ class FrameBuffer(object):
 
     @staticmethod
     def logger_name(rank):
+        """
+        FrameBuffer.logger_name(rank)
+
+        Provide name of Logger for MPI rank `rank`.
+        """
         return __name__ + f"::FrameBuffer.{rank}.log"
 
 
     def __init__(self, n_buf, dtype=np.float64, host=0):
         """
+        FrameBuffer(n_buf, dtype=np.float64, host=0)
+
+        Frame Buffers are a Message Queue. Each 'frame' refers to an
+        ecapsulation of a message in the message queue (called a 'buffer').
+        Each frame contains a counter representing the true message size, and a
+        claim ID which ensures that the subsequent frames are claimed by the
+        same MPI rank. This constructor preallocates MPI RMA window consisting
+        of `n_buf` messages. Each message is `dtype`. The RMA buffer is hosted
+        on rank `host`.
+
+        A logger is available when the logging level is set to `logging.DEBUG`
         """
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
@@ -59,12 +82,15 @@ class FrameBuffer(object):
 
         if self.rank == self.host:
             self.lock()
-            self.ptr_set([0, 0, 0])
+            self._ptr_set([0, 0, 0])
             self.unlock()
 
 
     def lock(self):
         """
+        lock()
+
+        Lock the Frame Buffer's MPI RMA windows. Locks are MPI.LOCK_EXCLUSIVE.
         """
         self.win.Lock(rank=self.host, lock_type=MPI.LOCK_EXCLUSIVE)
         self.ptr.Lock(rank=self.host, lock_type=MPI.LOCK_EXCLUSIVE)
@@ -74,6 +100,9 @@ class FrameBuffer(object):
 
     def unlock(self):
         """
+        unlock()
+
+        Unlocks the Frame Buffer's MPI RMA windows.
         """
         self.win.Unlock(rank=self.host)
         self.ptr.Unlock(rank=self.host)
@@ -81,8 +110,72 @@ class FrameBuffer(object):
         self.log.debug(f"unlock")
 
 
-    def ptr_set(self, src):
+    @property
+    def idx(self):
         """
+        Index to the current frame
+        """
+        return self._idx
+
+
+    @property
+    def max(self):
+        """
+        Maximum index in the current buffer
+        """
+        return self._max
+
+
+    @property
+    def len(self):
+        """
+        Maximum length of the all data entered into the buffer
+        """
+        return self._len
+
+
+    def sync(self):
+        """
+        sync()
+
+        Syncronizes the local pointer states:
+            * idx: index to the current frame
+            * max: maximum index in the current buffer
+            * len: maximum length of the all data entered into the buffer
+
+        Requires a lock.
+        """
+        [self._idx, self._max, self._len] = self._ptr_get()
+
+
+    def set(self, idx, idx_max, idx_len):
+        """
+        set(idx, idx_max, idx_len)
+
+        Set the local pointer states and syncronize the MPI RMA windows.
+
+        Requires a lock.
+        """
+        self._ptr_set((idx, idx_max, idx_len))
+
+
+    def incr(self, idx, idx_max, idx_len):
+        """
+        incr()
+
+        Increments the remote and local pointers.
+
+        Requires a lock.
+        """
+        [self._idx, self._max, self._len] = self._ptr_incr(
+            (idx, idx_max, idx_len))
+
+
+    def _ptr_set(self, src):
+        """
+        _ptr_set(src)
+
+        Set the MPI RMA window to the state in src.
         """
         buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
@@ -90,11 +183,14 @@ class FrameBuffer(object):
 
         self.ptr.Put(buf, target_rank=self.host)
 
-        self.log.debug(f"ptr_set {src=}")
+        self.log.debug(f"_ptr_set {src=}")
 
 
-    def ptr_incr(self, src):
+    def _ptr_incr(self, src):
         """
+        _ptr_incr(src)
+
+        Increment the state in the MPI RMA window by src.
         """
         buf  = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
         incr = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
@@ -102,25 +198,31 @@ class FrameBuffer(object):
         incr[:] = src[:]
         self.ptr.Get_accumulate(incr, buf, target_rank=self.host)
 
-        self.log.debug(f"ptr_incr {buf=} {incr=}")
+        self.log.debug(f"_ptr_incr {buf=} {incr=}")
 
         return buf
 
 
-    def ptr_get(self):
+    def _ptr_get(self):
         """
+        _ptr_get():
+
+        Read the state in the MPI RMA window.
         """
         buf = np.empty(PTR_BUFF_SIZE, dtype=np.uint64)
 
         self.ptr.Get(buf, target_rank=self.host)
 
-        self.log.debug(f"ptr_get {buf=}")
+        self.log.debug(f"_ptr_get {buf=}")
 
         return buf
 
 
-    def buf_get(self, N, offset):
+    def _buf_get(self, N, offset):
         """
+        _buf_get(N, offset)
+
+        Get `N` frames starting at index `offset`
         """
         buf = np.empty(N, dtype=self.np_dtype)
 
@@ -130,7 +232,7 @@ class FrameBuffer(object):
             target      = (offset % self.n_buf, N, self.mpi_dtype)
         )
 
-        self.log.debug(f"ptr_get {buf=}")
+        self.log.debug(f"_buf_get {buf=}")
 
         return buf
 
@@ -149,6 +251,9 @@ class FrameBuffer(object):
 
     def fence(self):
         """
+        fence()
+
+        Place a Fence into the MPI RMA Windows.
         """
         self.win.Fence()
         self.ptr.Fence()
@@ -175,7 +280,7 @@ class Producer(object):
 
             self.buf.lock()
             chunk = self.buf.buf_fill(src, 0)
-            self.buf.ptr_set([0, chunk, len(src)])
+            self.buf.set(0, chunk, len(src))
             self.buf.unlock()
 
             # print("ptr_len has been set: " + str(len(src)))
@@ -185,18 +290,15 @@ class Producer(object):
                 while True:
 
                     self.buf.lock()
-                    [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+                    self.buf.sync()
 
-                    if src_offset < src_capacity:
+                    if self.buf.idx < self.buf.max:
                         self.buf.unlock()
                         # print(f"waiting {src_offset=}, {src_capacity=}")
                         continue
 
                     idx_max = self.buf.buf_fill(src, chunk)
-                    [src_offset, src_capacity, src_len] = self.buf.ptr_incr(
-                        [0, idx_max, 0]
-                    )
-                    src_capacity += idx_max
+                    self.buf.incr(0, idx_max, 0)
                     chunk += idx_max
                     self.buf.unlock()
 
@@ -215,21 +317,20 @@ class Producer(object):
 
             while True:
                 self.buf.lock()
-                [src_offset, src_capacity, src_len] = self.buf.ptr_get()
+                self.buf.sync()
 
-                if src_offset >= src_len:
+                if self.buf.idx >= self.buf.len:
                     self.buf.unlock()
                     # print(f"Overrunning Src {src_offset=}, {src_len=}")
                     return None
 
-                if src_offset >= src_capacity:
+                if self.buf.idx >= self.buf.max:
                     # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
                     self.buf.unlock()
                     continue
 
-                # self.buf.lock()
-                [src_offset, src_capacity, src_len] = self.buf.ptr_incr([N, 0, 0])
-                buf = self.buf.buf_get(N, src_offset)
+                self.buf.incr(N, 0, 0)
+                buf = self.buf._buf_get(N, self.buf.idx)
                 # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
                 self.buf.unlock()
 
