@@ -41,9 +41,9 @@ class FrameBuffer(object):
         return __name__ + f"::FrameBuffer.{rank}.log"
 
 
-    def __init__(self, n_buf, dtype=np.float64, host=0):
+    def __init__(self, n_buf, n_mes, dtype=np.float64, host=0):
         """
-        FrameBuffer(n_buf, dtype=np.float64, host=0)
+        FrameBuffer(n_buf, n_mes, dtype=np.float64, host=0)
 
         Frame Buffers are a Message Queue. Each 'frame' refers to an
         ecapsulation of a message in the message queue (called a 'buffer').
@@ -59,10 +59,14 @@ class FrameBuffer(object):
         self.rank = self.comm.Get_rank()
         self.host = host
 
-        self.np_dtype  = dtype
-        self.mpi_dtype = from_numpy_dtype(dtype)
+        self.np_dtype  = np.dtype(
+            [('end', np.uint64,), ('m', np.uint64,), ('f', dtype, (n_mes,))]
+        )
+        self.mpi_dtype = from_numpy_dtype(self.np_dtype)
+        self.mpi_dtype.Commit()
 
         self.n_buf = n_buf
+        self.n_mes = n_mes
 
         self.win = make_win(
             dtype = self.mpi_dtype,
@@ -82,8 +86,12 @@ class FrameBuffer(object):
 
         if self.rank == self.host:
             self.lock()
-            self._ptr_set([0, 0, 0])
+            self._ptr_set((0, 0, 0))
             self.unlock()
+
+
+    def __del__(self):
+        self.mpi_dtype.Free()
 
 
     def lock(self):
@@ -143,7 +151,8 @@ class FrameBuffer(object):
         Requires a lock.
         """
         self.incr(N, 0, 0)
-        return self._buf_get(N, self.idx)
+        [buf] = self._buf_get(N, self.idx)
+        return buf['f'][:buf['end']]
 
 
     def put(self, src):
@@ -252,7 +261,7 @@ class FrameBuffer(object):
         buf = np.empty(N, dtype=self.np_dtype)
 
         self.win.Get(
-            buf,
+            [buf, self.mpi_dtype],
             target_rank = self.host,
             target      = (offset % self.n_buf, N, self.mpi_dtype)
         )
@@ -270,7 +279,8 @@ class FrameBuffer(object):
         """
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
         # print(f"{mem=}, {src=}, {idx=}, {self.n_buf=} {int(idx) % self.n_buf}")
-        mem[int(idx % self.n_buf)] = src
+        mem[int(idx % self.n_buf)]['end'] = len(src)
+        mem[int(idx % self.n_buf)]['f'][:len(src)] = src[:]
 
         self.log.debug(f"_buf_put {idx=}")
 
@@ -300,7 +310,7 @@ class FrameBuffer(object):
 
 class Producer(object):
 
-    def __init__(self, n_buf, single=False):
+    def __init__(self, n_buf, n_mes, single=False):
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
 
@@ -310,7 +320,7 @@ class Producer(object):
             self.mpi_dtype = MPI.FLOAT
             self.np_dtype = np.float32
 
-        self.buf = FrameBuffer(n_buf, dtype=self.np_dtype, host=0)
+        self.buf = FrameBuffer(n_buf, n_mes, dtype=self.np_dtype, host=0)
 
 
     def put(self, src):
@@ -319,8 +329,8 @@ class Producer(object):
                 self.buf.lock()
                 self.buf.sync()
 
-                # Check if there is space in the buffer for new elements. If the
-                # buffer is full, spin and watch for space
+                # Check if there is space in the buffer for new elements. If
+                # the buffer is full, spin and watch for space
                 if self.buf.max - self.buf.idx >= self.buf.n_buf:
                     self.buf.unlock()
                     continue
