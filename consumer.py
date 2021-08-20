@@ -28,7 +28,10 @@ if args.logging:
     basicConfig(filename=f"{rank:0>3}.log", level=DEBUG)
 
 data = np.random.rand(data_size)
-producer.fill(data)
+# producer.fill(data)
+producer.claim(len(data))
+for elt in data:
+    producer.put(elt)
 
 print(f"{rank=} {data=}")
 
@@ -39,4 +42,4 @@ for i in range(data_size):
         print(f"{rank=}, {i=}, {p=}")
         res += 1
 
-print(f"{res=}")
+print(f"{rank=} {res=}")

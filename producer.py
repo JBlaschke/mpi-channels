@@ -134,6 +134,30 @@ class FrameBuffer(object):
         return self._len
 
 
+    def take(self, N):
+        """
+        take(N)
+
+        Take (claim) `N` frames from the buffer, and increment counters.
+
+        Requires a lock.
+        """
+        self.incr(N, 0, 0)
+        return self._buf_get(N, self.idx)
+
+
+    def put(self, src):
+        """
+        put(src)
+
+        Place `src` at the end of the buffer.
+
+        Requires a lock.
+        """
+        self.incr(0, 1, 0)
+        self._buf_put(src, self.max)
+
+
     def sync(self):
         """
         sync()
@@ -168,7 +192,8 @@ class FrameBuffer(object):
         Requires a lock.
         """
         [self._idx, self._max, self._len] = self._ptr_incr(
-            (idx, idx_max, idx_len))
+            (idx, idx_max, idx_len)
+        )
 
 
     def _ptr_set(self, src):
@@ -237,15 +262,29 @@ class FrameBuffer(object):
         return buf
 
 
+    def _buf_put(self, src, idx):
+        """
+        _buf_put(src, idx)
+
+        But src into the location at idx.
+        """
+        mem = np.frombuffer(self.win, dtype = self.np_dtype)
+        # print(f"{mem=}, {src=}, {idx=}, {self.n_buf=} {int(idx) % self.n_buf}")
+        mem[int(idx % self.n_buf)] = src
+
+        self.log.debug(f"_buf_put {idx=}")
+
+
     def buf_fill(self, src, offset):
         """
         """
         idx_remain = len(src) - offset
         idx_max = self.n_buf if idx_remain > self.n_buf else idx_remain
-        self.log.debug(f"buf_fill {idx_max=} {offset=}")
 
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
         mem[:idx_max] = src[offset:offset + idx_max]
+
+        self.log.debug(f"buf_fill {idx_max=} {offset=}")
         return idx_max
 
 
@@ -272,6 +311,34 @@ class Producer(object):
             self.np_dtype = np.float32
 
         self.buf = FrameBuffer(n_buf, dtype=self.np_dtype, host=0)
+
+
+    def put(self, src):
+        if self.rank == 0:
+            while True:
+                self.buf.lock()
+                self.buf.sync()
+
+                # Check if there is space in the buffer for new elements. If the
+                # buffer is full, spin and watch for space
+                if self.buf.max - self.buf.idx >= self.buf.n_buf:
+                    self.buf.unlock()
+                    continue
+
+                self.buf.put(src)
+                self.buf.unlock()
+                return
+        else:
+            return
+
+
+    def claim(self, N):
+        if self.rank == 0:
+            self.buf.lock()
+            self.buf.incr(0, 0, N)
+            self.buf.unlock()
+        else:
+            return
 
 
     def fill(self, src):
@@ -329,8 +396,7 @@ class Producer(object):
                     self.buf.unlock()
                     continue
 
-                self.buf.incr(N, 0, 0)
-                buf = self.buf._buf_get(N, self.buf.idx)
+                buf = self.buf.take(N)
                 # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
                 self.buf.unlock()
 
