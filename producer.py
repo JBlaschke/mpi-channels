@@ -2,10 +2,12 @@
 # -*- coding: utf-8 -*-
 
 
-import logging
-import numpy             as     np
-from   mpi4py            import MPI
-from   mpi4py.util.dtlib import from_numpy_dtype
+
+import numpy              as     np
+from   logging            import getLogger
+from   mpi4py             import MPI
+from   mpi4py.util.dtlib  import from_numpy_dtype
+from   concurrent.futures import ThreadPoolExecutor
 
 
 PTR_BUFF_SIZE = 3 # PTR, MAX, LEN
@@ -82,7 +84,7 @@ class FrameBuffer(object):
             host  = host
         )
 
-        self.log = logging.getLogger(FrameBuffer.logger_name(self.rank))
+        self.log = getLogger(FrameBuffer.logger_name(self.rank))
 
         if self.rank == self.host:
             self.lock()
@@ -347,9 +349,9 @@ class FrameBuffer(object):
 
 class RemoteChannel(object):
 
-    def __init__(self, n_buf, n_mes, dtype=np.float64, host=0):
+    def __init__(self, n_buf, n_mes, dtype=np.float64, host=0, n_fpool=4):
         """
-        RemoteChannel(n_buf, n_mes, dtype=np.float64, host=0)
+        RemoteChannel(n_buf, n_mes, dtype=np.float64, host=0, n_fpool=4)
 
         Create a RemoteChannel containing at most `n_buf` messages (with
         maximum message size `n_mes`). Messages are arrays of type `dtype`. The
@@ -357,6 +359,11 @@ class RemoteChannel(object):
 
         The RemoteChannel's internal state is held in a FrameBuffer object (in
         the `buf` attribute).
+
+        The RemoteChannel uses a ThreadPoolExecutor to handle futures,
+        `n_fpool` sets the size of this pool. Future objects resulting from
+        calls to `putf` are stored in `put_futures`, and Future instances
+        resulting from calles to `takef` are stored in `take_futures`.
         """
         self.comm  = MPI.COMM_WORLD
         self.rank  = self.comm.Get_rank()
@@ -365,6 +372,9 @@ class RemoteChannel(object):
 
         self.buf = FrameBuffer(n_buf, n_mes, dtype=self.dtype, host=self.host)
 
+        self.pool         = ThreadPoolExecutor(5)
+        self.put_futures  = list()
+        self.take_futures = list()
 
     def put(self, src):
         """
@@ -374,6 +384,8 @@ class RemoteChannel(object):
         retrieved using `take`. `src` must have a length. The size of `src`
         cannot exceed `n_mes`, but may be shorter (if it is shorter, padding to
         the size `n_msg` will be transmitted via MPI).
+
+        Blocks if buffer is full. For non-blocking version see `putf`
         """
         while True:
             self.buf.lock()
@@ -389,6 +401,23 @@ class RemoteChannel(object):
             self.buf.put(src)
             self.buf.unlock()
             return
+
+
+    def putf(self, src):
+        """
+        putf(src)
+        returns Future(None)
+
+        Submits the `put(src)` call to the Executor, and stores the future in
+        `put_futures`.
+
+        Non-blocking, returns a Future.
+        """
+        self.put_futures.append(
+            self.pool.submit(self.put, src)
+        )
+
+        return self.put_futures[-1]
 
 
     def claim(self, N):
@@ -424,6 +453,8 @@ class RemoteChannel(object):
         `take` can return `None` if there are no more messages in the buffer.
         The RemoteChannel uses the total claimed by `claim` to determine if it
         should wait for more messages.
+
+        Blocks if buffer is empty. For non-blocking version see `takef`
         """
         while True:
             self.buf.lock()
@@ -444,3 +475,21 @@ class RemoteChannel(object):
             self.buf.unlock()
 
             return buf
+
+
+    def takef(self):
+        """
+        takef()
+        returns Future(src)
+
+        Submits the `src = take()` call to the Executor, and stores the future
+        in `take_futures`.
+        
+        Non-blocking, returns a Future.
+        """
+        self.take_futures.append(
+            self.pool.submit(self.take)
+        )
+
+        return self.take_futures[-1]
+
