@@ -9,7 +9,7 @@ from   argparse           import ArgumentParser
 from   random             import random
 from   time               import sleep
 
-from producer import RemoteChannel
+from mpi_channels import RemoteChannel
 
 
 comm = MPI.COMM_WORLD
