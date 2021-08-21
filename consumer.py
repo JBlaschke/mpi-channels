@@ -9,7 +9,7 @@ from   argparse import ArgumentParser
 from   random   import random
 from   time     import sleep
 
-from producer import Producer
+from producer import RemoteChannel
 
 
 comm = MPI.COMM_WORLD
@@ -25,8 +25,8 @@ data_size = 30
 message_size = 10
 vector_size  = 6
 
-producer = Producer(buff_size, message_size)
-result   = Producer(data_size, 1)
+producer = RemoteChannel(buff_size, message_size)
+result   = RemoteChannel(data_size, 1)
 result.claim(data_size)
 
 
@@ -48,7 +48,7 @@ if rank > 0:
     res = 0
     p_sum = 0.
     for i in range(data_size):
-        p = producer.take(1)
+        p = producer.take()
         # sleep(random())
         if p is not None:
             # print(f"{rank=}, {i=}, {p=}")
@@ -67,7 +67,7 @@ if rank == 0:
 
     p_sum_r = 0
     for i in range(data_size):
-        sp = result.take(1)
+        sp = result.take()
         p_sum_r += sp[0]
         print(f"{rank=} {sp=}")
 

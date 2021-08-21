@@ -345,22 +345,36 @@ class FrameBuffer(object):
         self.ptr.Fence()
 
 
-class Producer(object):
+class RemoteChannel(object):
 
-    def __init__(self, n_buf, n_mes, single=False):
-        self.comm = MPI.COMM_WORLD
-        self.rank = self.comm.Get_rank()
+    def __init__(self, n_buf, n_mes, dtype=np.float64, host=0):
+        """
+        RemoteChannel(n_buf, n_mes, dtype=np.float64, host=0)
 
-        self.mpi_dtype = MPI.DOUBLE
-        self.np_dtype  = np.float64
-        if single:
-            self.mpi_dtype = MPI.FLOAT
-            self.np_dtype = np.float32
+        Create a RemoteChannel containing at most `n_buf` messages (with
+        maximum message size `n_mes`). Messages are arrays of type `dtype`. The
+        message buffers are hosted in MPI RMA windows on rank `host`.
 
-        self.buf = FrameBuffer(n_buf, n_mes, dtype=self.np_dtype, host=0)
+        The RemoteChannel's internal state is held in a FrameBuffer object (in
+        the `buf` attribute).
+        """
+        self.comm  = MPI.COMM_WORLD
+        self.rank  = self.comm.Get_rank()
+        self.dtype = np.float64
+        self.host  = host
+
+        self.buf = FrameBuffer(n_buf, n_mes, dtype=self.dtype, host=self.host)
 
 
     def put(self, src):
+        """
+        put(src)
+
+        Put a message `src` at the end of the RemoteChannel, where it can be
+        retrieved using `take`. `src` must have a length. The size of `src`
+        cannot exceed `n_mes`, but may be shorter (if it is shorter, padding to
+        the size `n_msg` will be transmitted via MPI).
+        """
         while True:
             self.buf.lock()
             self.buf.sync()
@@ -378,7 +392,14 @@ class Producer(object):
 
 
     def claim(self, N):
-        if self.rank == 0:
+        """
+        claim(N)
+
+        Reserve `N` slots in the RemoteChannel's FrameBuffer.
+
+        Note: `N` < `n_buf`.
+        """
+        if self.rank == self.host:
             self.buf.lock()
             self.buf.incr(0, 0, N)
             self.buf.sync()
@@ -388,8 +409,16 @@ class Producer(object):
             return
 
 
-    def take(self, N):
+    def take(self):
+        """
+        take()
+        returns src (a message -- i.e. `np.array` -- of length at most `n_mes`)
 
+        Take a message `src` from the current location (`buf.idx`) of the
+        RemoteChannel, where it had ben placed using `put`. `src` is of type
+        `np.array` with variable length between 1 and `n_mes` (note that MPI
+        communication is padded up to the size `n_mes`).
+        """
         while True:
             self.buf.lock()
             self.buf.sync()
