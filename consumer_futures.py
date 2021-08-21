@@ -8,7 +8,6 @@ from   logging            import DEBUG, basicConfig
 from   argparse           import ArgumentParser
 from   random             import random
 from   time               import sleep
-from   concurrent.futures import wait, as_completed
 
 from producer import RemoteChannel
 
