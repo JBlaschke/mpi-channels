@@ -86,7 +86,7 @@ class FrameBuffer(object):
 
         if self.rank == self.host:
             self.lock()
-            self._ptr_set((0, 0, 0))
+            self._ptr_put((0, 0, 0))
             self.unlock()
 
 
@@ -151,7 +151,9 @@ class FrameBuffer(object):
         Requires a lock.
         """
         self.incr(N, 0, 0)
+        # print(f"take {self.rank=} {self.idx=} {self.max=} {self.len=}")
         [buf] = self._buf_get(N, self.idx)
+        # print(f"{buf=}")
         return buf['f'][:buf['end']]
 
 
@@ -164,7 +166,16 @@ class FrameBuffer(object):
         Requires a lock.
         """
         self.incr(0, 1, 0)
-        self._buf_put(src, self.max)
+        # print(f"put {self.rank=} {self.idx=} {self.max=} {self.len=}")
+        if self.rank == self.host:
+            self._buf_set(src, self.max)
+        else:
+            buf = np.empty(1, dtype=self.np_dtype)
+            buf[0]['end'] = len(src)
+            buf[0]['f'][:len(src)] = src[:]
+
+            # print(f"{buf=}")
+            self._buf_put(buf, self.max)
 
 
     def sync(self):
@@ -181,15 +192,15 @@ class FrameBuffer(object):
         [self._idx, self._max, self._len] = self._ptr_get()
 
 
-    def set(self, idx, idx_max, idx_len):
+    def init(self, idx, idx_max, idx_len):
         """
-        set(idx, idx_max, idx_len)
+        init(idx, idx_max, idx_len)
 
         Set the local pointer states and syncronize the MPI RMA windows.
 
         Requires a lock.
         """
-        self._ptr_set((idx, idx_max, idx_len))
+        self._ptr_put((idx, idx_max, idx_len))
 
 
     def incr(self, idx, idx_max, idx_len):
@@ -205,9 +216,9 @@ class FrameBuffer(object):
         )
 
 
-    def _ptr_set(self, src):
+    def _ptr_put(self, src):
         """
-        _ptr_set(src)
+        _ptr_put(src)
 
         Set the MPI RMA window to the state in src.
         """
@@ -217,7 +228,7 @@ class FrameBuffer(object):
 
         self.ptr.Put(buf, target_rank=self.host)
 
-        self.log.debug(f"_ptr_set {src=}")
+        self.log.debug(f"_ptr_put {src=}")
 
 
     def _ptr_incr(self, src):
@@ -266,23 +277,42 @@ class FrameBuffer(object):
             target      = (offset % self.n_buf, N, self.mpi_dtype)
         )
 
-        self.log.debug(f"_buf_get {buf=}")
+        self.log.debug(f"_buf_get {offset=}")
 
         return buf
 
 
-    def _buf_put(self, src, idx):
+    def _buf_set(self, src, idx):
         """
-        _buf_put(src, idx)
+        _buf_set(src, idx)
 
-        But src into the location at idx.
+        Set `src` at the location at `idx`.
         """
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
         # print(f"{mem=}, {src=}, {idx=}, {self.n_buf=} {int(idx) % self.n_buf}")
         mem[int(idx % self.n_buf)]['end'] = len(src)
         mem[int(idx % self.n_buf)]['f'][:len(src)] = src[:]
 
-        self.log.debug(f"_buf_put {idx=}")
+        self.log.debug(f"_buf_set {idx=}")
+
+
+    def _buf_put(self, src, offset):
+        """
+        _buf_put(src)
+
+        Put `src` into the MPI RMA window to the state at `offset`.
+        """
+        buf = np.empty(len(src), dtype=self.np_dtype)
+
+        buf[:] = src[:]
+
+        self.win.Put(
+            [buf, self.mpi_dtype],
+            target_rank = self.host,
+            target      = (offset % self.n_buf, len(src), self.mpi_dtype)
+        )
+
+        self.log.debug(f"_buf_put {offset=}")
 
 
     def buf_fill(self, src, offset):
@@ -324,21 +354,19 @@ class Producer(object):
 
 
     def put(self, src):
-        if self.rank == 0:
-            while True:
-                self.buf.lock()
-                self.buf.sync()
+        while True:
+            self.buf.lock()
+            self.buf.sync()
 
-                # Check if there is space in the buffer for new elements. If
-                # the buffer is full, spin and watch for space
-                if self.buf.max - self.buf.idx >= self.buf.n_buf:
-                    self.buf.unlock()
-                    continue
-
-                self.buf.put(src)
+            # Check if there is space in the buffer for new elements. If the
+            # buffer is full, spin and watch for space
+            # print(f"putting {self.buf.idx=} {self.buf.max=} {self.buf.len=}")
+            if self.buf.max - self.buf.idx >= self.buf.n_buf:
                 self.buf.unlock()
-                return
-        else:
+                continue
+
+            self.buf.put(src)
+            self.buf.unlock()
             return
 
 
@@ -346,6 +374,8 @@ class Producer(object):
         if self.rank == 0:
             self.buf.lock()
             self.buf.incr(0, 0, N)
+            self.buf.sync()
+            # print(f"claim: {self.buf.idx=} {self.buf.max=} {self.buf.len=}")
             self.buf.unlock()
         else:
             return
@@ -357,7 +387,7 @@ class Producer(object):
 
             self.buf.lock()
             chunk = self.buf.buf_fill(src, 0)
-            self.buf.set(0, chunk, len(src))
+            self.buf.init(0, chunk, len(src))
             self.buf.unlock()
 
             # print("ptr_len has been set: " + str(len(src)))
@@ -390,24 +420,22 @@ class Producer(object):
 
     def take(self, N):
 
-        if self.rank > 0:
+        while True:
+            self.buf.lock()
+            self.buf.sync()
 
-            while True:
-                self.buf.lock()
-                self.buf.sync()
-
-                if self.buf.idx >= self.buf.len:
-                    self.buf.unlock()
-                    # print(f"Overrunning Src {src_offset=}, {src_len=}")
-                    return None
-
-                if self.buf.idx >= self.buf.max:
-                    # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
-                    self.buf.unlock()
-                    continue
-
-                buf = self.buf.take(N)
-                # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
+            if self.buf.idx >= self.buf.len:
                 self.buf.unlock()
+                # print(f"Overrunning Src {self.buf.idx=}, {self.buf.len=}")
+                return None
 
-                return buf
+            if self.buf.idx >= self.buf.max:
+                # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
+                self.buf.unlock()
+                continue
+
+            buf = self.buf.take(N)
+            # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
+            self.buf.unlock()
+
+            return buf
