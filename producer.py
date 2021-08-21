@@ -50,8 +50,8 @@ class FrameBuffer(object):
         Each frame contains a counter representing the true message size, and a
         claim ID which ensures that the subsequent frames are claimed by the
         same MPI rank. This constructor preallocates MPI RMA window consisting
-        of `n_buf` messages. Each message is `dtype`. The RMA buffer is hosted
-        on rank `host`.
+        of `n_buf` messages with a maximum size `n_mes`. Each message is
+        `dtype`. The RMA buffer is hosted on rank `host`.
 
         A logger is available when the logging level is set to `logging.DEBUG`
         """
@@ -142,17 +142,18 @@ class FrameBuffer(object):
         return self._len
 
 
-    def take(self, N):
+    def take(self):
         """
-        take(N)
+        take()
 
-        Take (claim) `N` frames from the buffer, and increment counters.
+        Take the current frame (current means the frame at index `idx`) from
+        the buffer, and increment `idx`.
 
         Requires a lock.
         """
-        self.incr(N, 0, 0)
+        self.incr(1, 0, 0)
         # print(f"take {self.rank=} {self.idx=} {self.max=} {self.len=}")
-        [buf] = self._buf_get(N, self.idx)
+        [buf] = self._buf_get(1, self.idx)
         # print(f"{buf=}")
         return buf['f'][:buf['end']]
 
@@ -161,7 +162,8 @@ class FrameBuffer(object):
         """
         put(src)
 
-        Place `src` at the end of the buffer.
+        Place `src` at the end of the buffer (end means the frame at index
+        `max`), and increment `max`.
 
         Requires a lock.
         """
@@ -315,8 +317,13 @@ class FrameBuffer(object):
         self.log.debug(f"_buf_put {offset=}")
 
 
-    def buf_fill(self, src, offset):
+    def _buf_fill(self, src, offset):
         """
+        _buf_fill(src, offset)
+        returns idx_max = min(n_buf, len(src) - offset
+
+        Sequentially fill the local buffer from the beginning to `idx_max`
+        using elements from `src` starting at `offset`.
         """
         idx_remain = len(src) - offset
         idx_max = self.n_buf if idx_remain > self.n_buf else idx_remain
@@ -324,7 +331,7 @@ class FrameBuffer(object):
         mem = np.frombuffer(self.win, dtype = self.np_dtype)
         mem[:idx_max] = src[offset:offset + idx_max]
 
-        self.log.debug(f"buf_fill {idx_max=} {offset=}")
+        self.log.debug(f"_buf_fill {idx_max=} {offset=}")
         return idx_max
 
 
@@ -381,43 +388,6 @@ class Producer(object):
             return
 
 
-    def fill(self, src):
-
-        if self.rank == 0:
-
-            self.buf.lock()
-            chunk = self.buf.buf_fill(src, 0)
-            self.buf.init(0, chunk, len(src))
-            self.buf.unlock()
-
-            # print("ptr_len has been set: " + str(len(src)))
-            self.comm.Barrier()
-
-            if chunk < len(src):
-                while True:
-
-                    self.buf.lock()
-                    self.buf.sync()
-
-                    if self.buf.idx < self.buf.max:
-                        self.buf.unlock()
-                        # print(f"waiting {src_offset=}, {src_capacity=}")
-                        continue
-
-                    idx_max = self.buf.buf_fill(src, chunk)
-                    self.buf.incr(0, idx_max, 0)
-                    chunk += idx_max
-                    self.buf.unlock()
-
-                    # print(f"refilled buffer: {src_offset=}, {src_capacity=}, {idx_max=}")
-
-                    if chunk >= len(src):
-                        # print("done!")
-                        break
-        else:
-            self.comm.Barrier()
-
-
     def take(self, N):
 
         while True:
@@ -434,7 +404,7 @@ class Producer(object):
                 self.buf.unlock()
                 continue
 
-            buf = self.buf.take(N)
+            buf = self.buf.take()
             # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
             self.buf.unlock()
 

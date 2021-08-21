@@ -42,7 +42,6 @@ if args.logging:
 
 if rank == 0:
     data = np.random.rand(data_size, vector_size)
-    # producer.fill(data)
     producer.claim(len(data))
     p_sum = 0.
     for elt in data:
@@ -56,7 +55,7 @@ if rank > 0:
     p_sum = 0.
     for i in range(data_size):
         p = producer.take(1)
-#       sleep(random())
+        # sleep(random())
         if p is not None:
             # print(f"{rank=}, {i=}, {p=}")
             sp = np.sum(p)
