@@ -22,8 +22,8 @@ args, _ = parser.parse_known_args()
 
 buff_size = 10
 data_size = 30
-message_size = 10
-vector_size  = 6
+message_size = 100
+vector_size  = 60
 
 producer = RemoteChannel(buff_size, message_size)
 result   = RemoteChannel(data_size, 1)
