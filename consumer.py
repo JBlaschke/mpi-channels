@@ -9,7 +9,7 @@ from   argparse import ArgumentParser
 from   random   import random
 from   time     import sleep
 
-from producer import Producer, make_win
+from producer import Producer
 
 
 comm = MPI.COMM_WORLD
@@ -29,12 +29,6 @@ producer = Producer(buff_size, message_size)
 result   = Producer(data_size, 1)
 result.claim(data_size)
 
-p_sum_win = make_win(
-    dtype = MPI.DOUBLE,
-    n_buf = 1,
-    comm  = comm,
-    host  = 0
-)
 
 if args.logging:
     producer.buf.log.setLevel(DEBUG)
@@ -66,19 +60,10 @@ if rank > 0:
             res += 1
 
     print(f"{rank=} {res=}")
-    p_sum_win.Lock(rank=0)
-    buf = np.empty(1, dtype=np.float64)
-    incr = np.empty(1, dtype=np.float64)
-    incr[0] = p_sum
-    p_sum_win.Get_accumulate(incr, buf, target_rank=0)
-    p_sum_win.Unlock(rank=0)
 
 comm.Barrier()
 
 if rank == 0:
-    p_sum_win.Lock(rank=0)
-    p_sum_buf = np.frombuffer(p_sum_win, dtype=np.float64)
-    p_sum_win.Unlock(rank=0)
 
     p_sum_r = 0
     for i in range(data_size):
@@ -86,5 +71,4 @@ if rank == 0:
         p_sum_r += sp[0]
         print(f"{rank=} {sp=}")
 
-    print(f"{rank=} {p_sum_buf=} : {p_sum - p_sum_buf[0]}")
     print(f"{rank=} {p_sum_r=} : {p_sum - p_sum_r}")
