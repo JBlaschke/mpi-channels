@@ -397,7 +397,8 @@ class RemoteChannel(object):
 
         Reserve `N` slots in the RemoteChannel's FrameBuffer.
 
-        Note: `N` < `n_buf`.
+        Note: `N` < `n_buf`. Only `host` can claim space in the buffer, calls
+        to `claim` from ranks other than `host` are ignored.
         """
         if self.rank == self.host:
             self.buf.lock()
@@ -413,11 +414,16 @@ class RemoteChannel(object):
         """
         take()
         returns src (a message -- i.e. `np.array` -- of length at most `n_mes`)
+        returns None if the internal buffer contains no more elements
 
         Take a message `src` from the current location (`buf.idx`) of the
         RemoteChannel, where it had ben placed using `put`. `src` is of type
         `np.array` with variable length between 1 and `n_mes` (note that MPI
         communication is padded up to the size `n_mes`).
+
+        `take` can return `None` if there are no more messages in the buffer.
+        The RemoteChannel uses the total claimed by `claim` to determine if it
+        should wait for more messages.
         """
         while True:
             self.buf.lock()
