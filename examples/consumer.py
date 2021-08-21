@@ -25,14 +25,14 @@ data_size = 300
 message_size = 10000
 vector_size  = 1024
 
-producer = RemoteChannel(buff_size, message_size)
-result   = RemoteChannel(data_size, 1)
-producer.claim(data_size)
+inputs = RemoteChannel(buff_size, message_size)
+result = RemoteChannel(data_size, 1)
+inputs.claim(data_size)
 result.claim(data_size)
 
 
 if args.logging:
-    producer.buf.log.setLevel(DEBUG)
+    inputs.buf.log.setLevel(DEBUG)
     basicConfig(filename=f"{rank:0>3}.log", level=DEBUG)
 
 if rank == 0:
@@ -40,7 +40,7 @@ if rank == 0:
     
     p_sum = 0.
     for elt in data:
-        producer.put(elt)
+        inputs.put(elt)
         p_sum += np.sum(elt)
     print(f"{rank=} {p_sum=}")
 
@@ -49,7 +49,7 @@ if rank > 0:
     res = 0
     p_sum = 0.
     for i in range(data_size):
-        p = producer.take()
+        p = inputs.take()
         # sleep(random())
         if p is not None:
             sp = np.sum(p)
