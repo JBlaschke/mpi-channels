@@ -18,7 +18,7 @@ setuptools.setup(
     description="A RemoteChannel implementation built on top of MPI RMA",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/JBlaschke/mpi_channels",
+    url="https://github.com/JBlaschke/mpi-channels",
     packages=setuptools.find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
