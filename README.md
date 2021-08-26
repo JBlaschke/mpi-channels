@@ -31,11 +31,10 @@ to determine of a `take` call should wait for more data).
 * Place data into the channel:
 
 ```python
-# Put data into channel
+# Put data into channel by iterating over data source and putting each element
+# into the channel one-by-one. `putf` is non-blocking.
 if rank == 0:
-    data = np.random.rand(data_size, vector_size)
-    
-    p_sum = 0.
+    # data = data source
     for elt in data:
         inputs.putf(elt)
 ```
@@ -51,10 +50,13 @@ is full.
 ```python
 # Take data from the channel
 if rank > 0:
-    res = 0
-    p_sum = 0.
+    # data_size is the expected data size -- make sure that it's big enough.
     for i in range(data_size):
         p = inputs.take()
+        # if there is no more data, p = None
+        if p is None:
+            break
+        # Do some work with p
 ```
 
 The `take` method blocks until data can be taken from the channel. If the
