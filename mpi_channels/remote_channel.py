@@ -32,7 +32,7 @@ class RemoteChannel(object):
         """
         self.comm  = MPI.COMM_WORLD
         self.rank  = self.comm.Get_rank()
-        self.dtype = np.float64
+        self.dtype = dtype
         self.host  = host
 
         self.buf = FrameBuffer(n_buf, n_mes, dtype=self.dtype, host=self.host)
