@@ -12,7 +12,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="mpi-channels",
-    version="0.1.1",
+    version="0.1.2",
     author="Johannes Blaschke",
     author_email="johannes@blaschke.science",
     description="A RemoteChannel implementation built on top of MPI RMA",
