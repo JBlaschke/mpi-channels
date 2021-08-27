@@ -7,7 +7,9 @@ parallelism via channels. The `RemoteChannel` class is a message queue.
 from the queue using the (blocking) `take` -- or the (non-blocking) `takef` --
 methods.
 
-The overall design is illustrated by [this slide](examples/illustrations/Remote%20Channel.pdf)
+This illustrates how you can use the `RemoteChannel` workflow to perform
+parallel work:
+![RemoteChannel](examples/illustrations/RemoteChannel.png)
 
 ## Installation
 
