@@ -8,15 +8,18 @@ from   logging            import getLogger
 from   mpi4py             import MPI
 from   concurrent.futures import ThreadPoolExecutor
 
-from . import FrameBuffer
+from . import FrameBuffer, Schedule
 
 
 
 class RemoteChannel(object):
 
-    def __init__(self, n_buf, n_mes, dtype=np.float64, host=0, n_fpool=4):
+    def __init__(self,
+            n_buf, n_mes, dtype=np.float64, host=0,
+            s_threashold=4, t_wait=0, r_rwait=1):
         """
-        RemoteChannel(n_buf, n_mes, dtype=np.float64, host=0, n_fpool=4)
+        RemoteChannel(n_buf, n_mes, dtype=np.float64, host=0,
+                      s_threashold=4, t_wait=0, r_rwait=1)
 
         Create a RemoteChannel containing at most `n_buf` messages (with
         maximum message size `n_mes`). Messages are arrays of type `dtype`. The
@@ -25,10 +28,12 @@ class RemoteChannel(object):
         The RemoteChannel's internal state is held in a FrameBuffer object (in
         the `buf` attribute).
 
-        The RemoteChannel uses a ThreadPoolExecutor to handle futures,
-        `n_fpool` sets the size of this pool. Future objects resulting from
-        calls to `putf` are stored in `put_futures`, and Future instances
-        resulting from calles to `takef` are stored in `take_futures`.
+        The RemoteChannel uses a ThreadPoolExecutor (of size 1) to handle
+        futures, The size of this pool needs to be limited to prevent multiple
+        threads locking each other out of the MPI RMA buffer. For this reason
+        we choose a size of 1. Future objects resulting from calls to `putf`
+        are stored in `put_futures`, and Future instances resulting from calles
+        to `takef` are stored in `take_futures`.
         """
         self.comm  = MPI.COMM_WORLD
         self.rank  = self.comm.Get_rank()
@@ -37,9 +42,12 @@ class RemoteChannel(object):
 
         self.buf = FrameBuffer(n_buf, n_mes, dtype=self.dtype, host=self.host)
 
-        self.pool         = ThreadPoolExecutor(5)
+        self.pool         = ThreadPoolExecutor(1)
         self.put_futures  = list()
         self.take_futures = list()
+
+        self.schedule = Schedule(threshold=128)
+
 
     def put(self, src):
         """
@@ -53,14 +61,19 @@ class RemoteChannel(object):
         Blocks if buffer is full. For non-blocking version see `putf`
         """
         while True:
+            # print(f"{self.rank=} start putting 1 {self.buf.idx=} {self.buf.max=} {self.buf.len=}", flush=True)
             self.buf.lock()
+            # print(f"{self.rank=} start putting 2", flush=True)
             self.buf.sync()
+            # print(f"{self.rank=} start putting 3", flush=True)
 
             # Check if there is space in the buffer for new elements. If the
             # buffer is full, spin and watch for space
             # print(f"putting {self.buf.idx=} {self.buf.max=} {self.buf.len=}")
             if self.buf.max - self.buf.idx >= self.buf.n_buf:
                 self.buf.unlock()
+                # print(f"PUT {self.buf.max=} {self.buf.idx=} {self.buf.n_buf=}", flush=True)
+                self.schedule()
                 continue
 
             self.buf.put(src)
@@ -122,22 +135,28 @@ class RemoteChannel(object):
         Blocks if buffer is empty. For non-blocking version see `takef`
         """
         while True:
+            # print(f"{self.rank=} start taking 1 {self.buf.idx=} {self.buf.max=} {self.buf.len=}", flush=True)
             self.buf.lock()
+            # print(f"{self.rank=} start taking 2", flush=True)
             self.buf.sync()
+            # print(f"{self.rank=} start taking 3", flush=True)
 
             if self.buf.idx >= self.buf.len:
                 self.buf.unlock()
-                # print(f"Overrunning Src {self.buf.idx=}, {self.buf.len=}")
+                # print(f"TAKE {self.buf.idx=}, {self.buf.len=}", flush=True)
                 return None
 
             if self.buf.idx >= self.buf.max:
-                # print(f"{self.rank=} peeking {src_offset=} {src_capacity=} {src_len=}")
                 self.buf.unlock()
+                # print(f"TAKE {self.rank=} peeking {self.buf.idx=} {self.buf.max=} {self.buf.len=}", flush=True)
+                self.schedule()
                 continue
 
             buf = self.buf.take()
+            # print(f"{self.rank=} taking", flush=True)
             # print(f"{self.rank=} taking {src_offset=}, {src_capacity=}, {src_len=}")
             self.buf.unlock()
+            # print(f"{self.rank=} done taking", flush=True)
 
             return buf
 
@@ -157,4 +176,3 @@ class RemoteChannel(object):
         )
 
         return self.take_futures[-1]
-

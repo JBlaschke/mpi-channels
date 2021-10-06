@@ -89,6 +89,9 @@ class FrameBuffer(object):
             self.lock()
             self._ptr_put((0, 0, 0))
             self.unlock()
+        self._idx = 0
+        self._max = 0
+        self._len = 0
 
 
     def __del__(self):

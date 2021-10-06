@@ -59,7 +59,7 @@ if rank == 0:
     for elt in data:
         inputs.putf(elt)
         p_sum += np.sum(elt)
-    print(f"{rank=} {p_sum=}")
+    print(f"{rank=} {p_sum=}", flush=True)
 
 #_______________________________________________________________________________
 # (on all other ranks) Take data, and compute the sum locally. The result is
@@ -69,15 +69,19 @@ if rank > 0:
     res = 0
     p_sum = 0.
     for i in range(data_size):
+        # print(f"{rank=} taking", flush=True)
         p = inputs.take()
+        # print(f"{rank=} {p=}", flush=True)
         # sleep(random())
         if p is not None:
             sp = np.sum(p)
             result.putf((sp,))
             p_sum += sp
             res += 1
+        # else:
+        #     print(f"{rank=} has quit", flush=True)
 
-    print(f"{rank=} {res=}")
+    print(f"{rank=} {res=}", flush=True)
 
 #_______________________________________________________________________________
 # (on rank 0) Take `result` elements (local partial sums), and finish the tally.
@@ -90,4 +94,4 @@ if rank == 0:
         p_sum_r += sp[0]
         # print(f"{rank=} {sp=}")
 
-    print(f"{rank=} {p_sum_r=} : {p_sum - p_sum_r}")
+    print(f"{rank=} {p_sum_r=} : {p_sum - p_sum_r}", flush=True)
