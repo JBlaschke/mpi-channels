@@ -16,10 +16,10 @@ class RemoteChannel(object):
 
     def __init__(self,
             n_buf, n_mes, dtype=np.float64, host=0,
-            s_threashold=4, t_wait=0, r_rwait=1):
+            s_threashold=128, t_wait=0, r_wait=1):
         """
         RemoteChannel(n_buf, n_mes, dtype=np.float64, host=0,
-                      s_threashold=4, t_wait=0, r_rwait=1)
+                      s_threashold=128, t_wait=0, r_rwait=1)
 
         Create a RemoteChannel containing at most `n_buf` messages (with
         maximum message size `n_mes`). Messages are arrays of type `dtype`. The
@@ -34,6 +34,10 @@ class RemoteChannel(object):
         we choose a size of 1. Future objects resulting from calls to `putf`
         are stored in `put_futures`, and Future instances resulting from calles
         to `takef` are stored in `take_futures`.
+
+        To avoid flooding the MPI RMP lock, we schedule random delays every
+        `s_threashold` many fialed peeks. The delays have a min `t_wait` with a
+        random weight of `r_wait`. 
         """
         self.comm  = MPI.COMM_WORLD
         self.rank  = self.comm.Get_rank()
@@ -46,7 +50,9 @@ class RemoteChannel(object):
         self.put_futures  = list()
         self.take_futures = list()
 
-        self.schedule = Schedule(threshold=128)
+        self.schedule = Schedule(
+            threshold=s_threashold, t_wait=t_wait, r_wait=r_wait
+        )
 
 
     def put(self, src):
